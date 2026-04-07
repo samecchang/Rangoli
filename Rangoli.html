@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Rangoli Drawing Tool</title>
+<style>
+:root{--ui:#1a1a2e;--accent:#e94560;--text:#eee}
+*{box-sizing:border-box;margin:0}
+body{background:#111;overflow:hidden;font-family:'Segoe UI',system-ui,sans-serif;color:var(--text);display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh}
+canvas{display:block;cursor:crosshair;touch-action:none}
+#toolbar{position:fixed;bottom:12px;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:10px;
+  background:var(--ui);padding:8px 16px;border-radius:20px;z-index:10;flex-wrap:wrap;justify-content:center;
+  border:1px solid rgba(255,255,255,0.1);backdrop-filter:blur(8px)}
+#toolbar label{font-size:12px;display:flex;align-items:center;gap:4px}
+#toolbar select,#toolbar input[type=range]{accent-color:var(--accent);font-size:12px;background:#2a2a3e;color:var(--text);border:1px solid rgba(255,255,255,0.15);border-radius:6px;padding:2px 4px}
+#toolbar button{background:none;border:1px solid rgba(255,255,255,0.15);color:var(--text);padding:4px 12px;border-radius:10px;cursor:pointer;font-size:12px}
+#toolbar button:hover{background:rgba(255,255,255,0.1)}
+#toolbar input[type=color]{width:30px;height:24px;border:none;background:none;cursor:pointer}
+.val{font-size:11px;min-width:28px;text-align:center;opacity:0.7}
+</style>
+</head>
+<body>
+<div id="toolbar">
+  <label>Divisions <select id="selDiv"></select></label>
+  <label>Color <input type="color" id="colorPick" value="#e94560"></label>
+  <label>Brush <input type="range" id="brushSize" min="1" max="30" value="3"><span class="val" id="brushVal">3</span></label>
+  <button id="btnUndo">↩ Undo</button>
+  <button id="btnClear">🗑 Clear</button>
+  <button id="btnSave">💾 Save</button>
+</div>
+<canvas id="c"></canvas>
+
+<script>
+(()=>{
+'use strict';
+const canvas=document.getElementById('c');
+const ctx=canvas.getContext('2d');
+const selDiv=document.getElementById('selDiv');
+const colorPick=document.getElementById('colorPick');
+const brushSize=document.getElementById('brushSize');
+const brushVal=document.getElementById('brushVal');
+const btnUndo=document.getElementById('btnUndo');
+const btnClear=document.getElementById('btnClear');
+const btnSave=document.getElementById('btnSave');
+
+// Populate divisions 2-36
+for(let i=2;i<=36;i++){const o=document.createElement('option');o.value=i;o.textContent=i;if(i===8)o.selected=true;selDiv.appendChild(o)}
+
+let divisions=8;
+let strokes=[]; // [{points:[[x,y],...], color, width}]
+let currentStroke=null;
+let cx,cy,radius;
+let dpr=window.devicePixelRatio||1;
+let cssSize=0;
+
+function resize(){
+  dpr=window.devicePixelRatio||1;
+  cssSize=Math.min(innerWidth-8,innerHeight-60);
+  canvas.style.width=cssSize+'px';
+  canvas.style.height=cssSize+'px';
+  canvas.width=Math.round(cssSize*dpr);
+  canvas.height=Math.round(cssSize*dpr);
+  cx=canvas.width/2;cy=canvas.height/2;radius=canvas.width/2-4*dpr;
+  ctx.setTransform(1,0,0,1,0,0);
+  redraw();
+}
+resize();
+window.addEventListener('resize',resize);
+
+selDiv.addEventListener('change',()=>{divisions=+selDiv.value;strokes=[];redraw()});
+brushSize.addEventListener('input',()=>{brushVal.textContent=brushSize.value});
+
+// Active segment is centered at top (12 o'clock), symmetric left-right
+// Spans from -PI/2 - half to -PI/2 + half
+function segStart(){return -Math.PI/2-Math.PI/divisions;}
+function segEnd(){return -Math.PI/2+Math.PI/divisions;}
+
+function redraw(forExport){
+  ctx.setTransform(1,0,0,1,0,0);
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  // Background circle
+  ctx.save();
+  ctx.beginPath();ctx.arc(cx,cy,radius,0,Math.PI*2);
+  ctx.fillStyle='#1a1a1a';ctx.fill();
+  ctx.clip();
+
+  // Draw all strokes replicated N times
+  const angle=Math.PI*2/divisions;
+  strokes.forEach(s=>drawStroke(s,angle));
+  if(currentStroke) drawStroke(currentStroke,angle);
+
+  ctx.restore();
+
+  if(!forExport){
+    // Division lines (dashed)
+    drawDivisionLines();
+    // Circle border
+    ctx.beginPath();ctx.arc(cx,cy,radius,0,Math.PI*2);
+    ctx.strokeStyle='#555';ctx.lineWidth=2*dpr;ctx.stroke();
+    // Highlight active segment
+    drawActiveSegment();
+  }
+}
+
+function drawStroke(s,angle){
+  if(s.points.length<2) return;
+  for(let r=0;r<divisions;r++){
+    ctx.save();
+    ctx.translate(cx,cy);
+    ctx.rotate(angle*r);
+    ctx.translate(-cx,-cy);
+    ctx.beginPath();
+    ctx.moveTo(s.points[0][0],s.points[0][1]);
+    for(let i=1;i<s.points.length;i++) ctx.lineTo(s.points[i][0],s.points[i][1]);
+    ctx.strokeStyle=s.color;
+    ctx.lineWidth=s.width*dpr;
+    ctx.lineCap='round';ctx.lineJoin='round';
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+function drawDivisionLines(){
+  const angle=Math.PI*2/divisions;
+  // The segment is centered at -PI/2, so first line is at segStart
+  const base=segStart();
+  ctx.save();
+  ctx.setLineDash([6*dpr,6*dpr]);
+  ctx.strokeStyle='#666';ctx.lineWidth=1*dpr;
+  for(let i=0;i<divisions;i++){
+    const a=base+angle*i;
+    ctx.beginPath();
+    ctx.moveTo(cx,cy);
+    ctx.lineTo(cx+Math.cos(a)*radius,cy+Math.sin(a)*radius);
+    ctx.stroke();
+  }
+  ctx.setLineDash([]);
+  ctx.restore();
+}
+
+function drawActiveSegment(){
+  const a0=segStart(),a1=segEnd();
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(cx,cy);
+  ctx.arc(cx,cy,radius,a0,a1);
+  ctx.closePath();
+  ctx.strokeStyle='rgba(233,69,96,0.5)';ctx.lineWidth=2*dpr;
+  ctx.setLineDash([4*dpr,4*dpr]);ctx.stroke();ctx.setLineDash([]);
+  ctx.fillStyle='rgba(233,69,96,0.04)';ctx.fill();
+  ctx.restore();
+}
+
+// Check if point is within the active segment (centered at top)
+function inActiveSegment(x,y){
+  const dx=x-cx,dy=y-cy;
+  const dist=Math.hypot(dx,dy);
+  if(dist>radius) return false;
+  let a=Math.atan2(dy,dx);
+  // Normalize relative to segment start
+  let rel=a-segStart();
+  while(rel<0) rel+=Math.PI*2;
+  while(rel>Math.PI*2) rel-=Math.PI*2;
+  const sectorAngle=Math.PI*2/divisions;
+  return rel>=0 && rel<=sectorAngle;
+}
+
+function getPos(e){
+  const r=canvas.getBoundingClientRect();
+  const t=e.touches?e.touches[0]:e;
+  const scaleX=canvas.width/r.width;
+  const scaleY=canvas.height/r.height;
+  return[(t.clientX-r.left)*scaleX, (t.clientY-r.top)*scaleY];
+}
+
+function startDraw(e){
+  e.preventDefault();
+  const p=getPos(e);
+  if(!inActiveSegment(p[0],p[1])) return;
+  currentStroke={points:[p],color:colorPick.value,width:+brushSize.value};
+  redraw();
+}
+function moveDraw(e){
+  if(!currentStroke) return;
+  e.preventDefault();
+  const p=getPos(e);
+  if(!inActiveSegment(p[0],p[1])) return;
+  currentStroke.points.push(p);
+  redraw();
+}
+function endDraw(e){
+  if(!currentStroke) return;
+  if(currentStroke.points.length>=2) strokes.push(currentStroke);
+  currentStroke=null;
+  redraw();
+}
+
+canvas.addEventListener('mousedown',startDraw);
+canvas.addEventListener('mousemove',moveDraw);
+window.addEventListener('mouseup',endDraw);
+canvas.addEventListener('touchstart',startDraw,{passive:false});
+canvas.addEventListener('touchmove',moveDraw,{passive:false});
+canvas.addEventListener('touchend',endDraw);
+
+btnUndo.addEventListener('click',()=>{strokes.pop();redraw()});
+btnClear.addEventListener('click',()=>{strokes=[];redraw()});
+btnSave.addEventListener('click',()=>{
+  redraw(true);
+  const a=document.createElement('a');
+  a.download='rangoli.png';a.href=canvas.toDataURL('image/png');a.click();
+  redraw();
+});
+
+redraw();
+})();
+</script>
+</body>
+</html>
